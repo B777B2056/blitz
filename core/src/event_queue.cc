@@ -139,14 +139,12 @@ namespace blitz
 
     void LinuxEventQueue::readFromKernel(struct io_uring_sqe* sqe, Connection* conn)
     {
-        std::cout << "read from fd: " << conn->socket() << std::endl;
         auto iovecs = conn->readBuffer().writeableArea2Iovecs();   // 内核向用户读缓冲区写入数据
         ::io_uring_prep_readv(sqe, conn->socket(), iovecs.data(), iovecs.size(), 0);
     }
 
     void LinuxEventQueue::writeIntoKernel(struct io_uring_sqe* sqe, Connection* conn)
     {
-        std::cout << "write to fd: " << conn->socket() << std::endl;
         auto iovecs = conn->writeBuffer().readableArea2Iovecs();   // 内核从用户写缓冲区读出数据
         ::io_uring_prep_writev(sqe, conn->socket(), iovecs.data(), iovecs.size(), 0);
     }

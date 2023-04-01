@@ -150,6 +150,7 @@ namespace blitz
 
     IoTask IoService::asyncHandle(Connection* conn)
     {
+        if (!conn)  co_return;
         // 读入缓冲区
         conn->setEvent(EventType::READ);
         bool err = co_await IoAwaiter{&this->mEventQueue_, conn};
@@ -174,8 +175,7 @@ namespace blitz
             co_return;
         }
         // 在线程池中执行用户业务逻辑回调
-        // co_await this->mThreadPool_.schedule();
-        if (this->mWriteCb_) this->mWriteCb_(conn);
+        if (this->mWriteCb_)    this->mWriteCb_(conn);
         co_return;
     }
 }   // namespace blitz

@@ -4,7 +4,6 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
-#include <optional>
 
 namespace blitz
 {
@@ -18,7 +17,7 @@ namespace blitz
         ThreadSafeQueue& operator=(ThreadSafeQueue&& rhs);
         ~ThreadSafeQueue() = default;
         void enqueue(std::coroutine_handle<> coro) noexcept; 
-        std::optional<std::coroutine_handle<>> dequeue() noexcept;
+        std::coroutine_handle<> dequeue() noexcept;
 
     private:
         mutable std::mutex mt;

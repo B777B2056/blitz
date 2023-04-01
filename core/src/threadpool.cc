@@ -23,19 +23,19 @@ namespace blitz
 
     void ThreadSafeQueue::enqueue(std::coroutine_handle<> coro) noexcept
     {
-        std::unique_lock lock{this->mt};
+        std::scoped_lock lock{this->mt};
         this->q.push(coro);
         this->cv.notify_one();
     }
 
-    std::optional<std::coroutine_handle<>> ThreadSafeQueue::dequeue() noexcept
+    std::coroutine_handle<> ThreadSafeQueue::dequeue() noexcept
     {
         std::unique_lock lock{this->mt};
-        if (this->q.empty())
+        while (this->q.empty())
         {
-            return {};
+            this->cv.wait(lock);
         }
-        auto coro = this->q.front();
+        auto coro = std::move(this->q.front());
         this->q.pop();
         return coro;
     }
@@ -52,11 +52,7 @@ namespace blitz
                 {
                     while (!stoken.stop_requested())
                     {
-                        auto coro = this->mTaskQueue_.dequeue();
-                        if (coro.has_value())
-                        {
-                            coro.value().resume();
-                        }
+                        this->mTaskQueue_.dequeue().resume();
                     }
                 }
             });
