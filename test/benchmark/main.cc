@@ -14,9 +14,11 @@ void signal_callback_handler(int signum)
 int main()
 {
     std::uint16_t port = 8888;
-    unsigned int threadNum = 4;
+    // unsigned int threadNum = 4;
     ::signal(SIGPIPE, signal_callback_handler);
-    auto svr = blitz::IoService{port, threadNum};
+    blitz::Acceptor acceptor;
+    acceptor.listen(port);
+    auto svr = blitz::IoService{acceptor};
     svr.registReadCallback([](blitz::Connection* conn)->void
     {
         char ch;

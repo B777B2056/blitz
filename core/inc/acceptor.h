@@ -42,7 +42,7 @@ namespace blitz
         Acceptor& operator=(Acceptor&& rhs);
         ~Acceptor();
 
-        void listen(std::uint16_t port, int backlog);
+        void listen(std::uint16_t port, int backlog = 5);
         
         NativeSockAddr& addr() noexcept { return this->impl_.addr; }
 

@@ -4,7 +4,6 @@
 #include <unordered_map>
 #include "acceptor.h"
 #include "event_queue.h"
-#include "threadpool.h"
 
 namespace blitz
 {
@@ -55,11 +54,11 @@ namespace blitz
     {
     public:
         IoService() = delete;
-        IoService(std::uint16_t port, unsigned int threadNum, int backlog = 5);
+        IoService(Acceptor& acceptor);
         IoService(const IoService&) = delete;
         IoService& operator=(const IoService&) = delete;
-        IoService(IoService&& rhs);
-        IoService& operator=(IoService&& rhs);
+        IoService(IoService&&) = default;
+        IoService& operator=(IoService&&) = default;
         ~IoService();
 
         void registReadCallback(IoEventCallback cb) noexcept { this->mReadCb_ = cb; }
@@ -70,9 +69,8 @@ namespace blitz
         void closeConn(Connection* conn);
 
     private:
-        Acceptor mAcceptor_;
+        Acceptor& mAcceptor_;
         EventQueue mEventQueue_;
-        ThreadPool mThreadPool_;
         IoEventCallback mReadCb_, mWriteCb_, mErrCb_;
 
         std::unordered_map<Connection*, IoTask> mConns_;

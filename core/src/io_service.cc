@@ -81,28 +81,10 @@ namespace blitz
         return this->isErr_; 
     }
 
-    IoService::IoService(std::uint16_t port, unsigned int threadNum, int backlog)
-        : mThreadPool_{threadNum}
+    IoService::IoService(Acceptor& acceptor)
+        : mAcceptor_{acceptor}
     {
-        this->mAcceptor_.listen(port, backlog);
         this->mEventQueue_.submitAccept(this->mAcceptor_);
-    }
-
-    IoService::IoService(IoService&& rhs)
-        : mThreadPool_{std::move(rhs.mThreadPool_)}
-    {
-        *this = std::move(rhs);
-    }
-
-    IoService& IoService::operator=(IoService&& rhs)
-    {
-        if (this != &rhs)
-        {
-            this->mAcceptor_ = std::move(rhs.mAcceptor_);
-            this->mEventQueue_ = std::move(rhs.mEventQueue_);
-            this->mThreadPool_ = std::move(rhs.mThreadPool_);
-        }
-        return *this;
     }
 
     IoService::~IoService()
@@ -162,7 +144,6 @@ namespace blitz
             co_return;
         }
         // 在线程池中执行用户业务逻辑回调
-        // co_await this->mThreadPool_.schedule();
         if (this->mReadCb_) this->mReadCb_(conn);
         // 写入缓冲区
         conn->setEvent(EventType::WRITE);
