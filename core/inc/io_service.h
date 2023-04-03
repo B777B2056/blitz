@@ -4,13 +4,15 @@
 #include <unordered_map>
 #include "acceptor.h"
 #include "event_queue.h"
+#include "threadpool.h"
 
 namespace blitz
 {
     // 将任务（Channel）提交到SQE（提交队列）后挂起协程
     // CQE（完成队列）有完成事件返回时恢复协程
-    struct IoTask
+    class AsyncTask
     {
+    public:
         struct promise_type
         {
             auto get_return_object();
@@ -20,27 +22,28 @@ namespace blitz
             auto final_suspend() noexcept;
         };
 
-        std::coroutine_handle<> coroutineHandle;
-
-        IoTask() = default;
-        explicit IoTask(std::coroutine_handle<> hdl);
-        IoTask(const IoTask&) = delete;
-        IoTask& operator=(const IoTask&) = delete;
-        IoTask(IoTask&& rhs);
-        IoTask& operator=(IoTask&& rhs);
-        ~IoTask() = default;
+        AsyncTask() = default;
+        explicit AsyncTask(std::coroutine_handle<> hdl);
+        AsyncTask(const AsyncTask&) = delete;
+        AsyncTask& operator=(const AsyncTask&) = delete;
+        AsyncTask(AsyncTask&& rhs);
+        AsyncTask& operator=(AsyncTask&& rhs);
+        ~AsyncTask();
 
         void resume();
+
+    private:
+        std::coroutine_handle<> mCoroutineHandle_;
     };
 
-    class IoAwaiter
+    class IoTaskAwaiter
     {
     public:
         bool await_ready() const noexcept;
         void await_suspend(std::coroutine_handle<> handle) noexcept;
         bool await_resume() const noexcept;
 
-        IoAwaiter(EventQueue* q, Connection* channel);
+        IoTaskAwaiter(EventQueue* q, Connection* channel);
 
     private:
         bool isErr_;
@@ -54,7 +57,7 @@ namespace blitz
     {
     public:
         IoService() = delete;
-        IoService(Acceptor& acceptor);
+        IoService(Acceptor& acceptor, std::size_t threadNum);
         IoService(const IoService&) = delete;
         IoService& operator=(const IoService&) = delete;
         IoService(IoService&&) = default;
@@ -64,6 +67,7 @@ namespace blitz
         void registReadCallback(IoEventCallback cb) noexcept { this->mReadCb_ = cb; }
         void registWriteCallback(IoEventCallback cb) noexcept { this->mWriteCb_ = cb; }
         void registErrorCallback(IoEventCallback cb) noexcept { this->mErrCb_ = cb; }
+        void registTimeoutCallback(IoEventCallback cb) noexcept { this->mTimeoutCb_ = cb; }
 
         void run();
         void closeConn(Connection* conn);
@@ -71,10 +75,10 @@ namespace blitz
     private:
         Acceptor& mAcceptor_;
         EventQueue mEventQueue_;
-        IoEventCallback mReadCb_, mWriteCb_, mErrCb_;
+        IoEventCallback mReadCb_, mWriteCb_, mErrCb_, mTimeoutCb_;
+        ThreadPool mThreadPool_;
+        std::unordered_map<Connection*, AsyncTask> mConns_;
 
-        std::unordered_map<Connection*, IoTask> mConns_;
-
-        IoTask asyncHandle(Connection* conn);
+        AsyncTask asyncHandle(Connection* conn);
     };
 }   // namespace blitz

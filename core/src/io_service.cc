@@ -4,85 +4,109 @@
 #include <iostream>
 #include "connection.h"
 
+#define ASYNC_EXEC(THREAD_POOL, CONN, CB)   \
+    if (CB)  \
+    {   \
+        if (0 == THREAD_POOL.threadNum())    \
+        {   \
+            CB(CONN);    \
+        }   \
+        else    \
+        {   \
+            co_await MultiThreadTaskAwaiter{&THREAD_POOL, [CONN, this]()->void   \
+            {   \
+                CB(CONN);    \
+            }}; \
+        }   \
+    }   \
+
 namespace blitz
 {
-    auto IoTask::promise_type::get_return_object()
+    auto AsyncTask::promise_type::get_return_object()
     {
-        return IoTask{std::coroutine_handle<IoTask::promise_type>::from_promise(*this)};
+        return AsyncTask{std::coroutine_handle<AsyncTask::promise_type>::from_promise(*this)};
     }
 
-    void IoTask::promise_type::unhandled_exception() noexcept
+    void AsyncTask::promise_type::unhandled_exception() noexcept
     {
 
     }
 
-    auto IoTask::promise_type::initial_suspend() noexcept 
+    auto AsyncTask::promise_type::initial_suspend() noexcept 
     { 
         return std::suspend_never{}; 
     }
 
-    auto IoTask::promise_type::final_suspend() noexcept 
+    auto AsyncTask::promise_type::final_suspend() noexcept 
     { 
         return std::suspend_always{}; 
     }
 
-    IoTask::IoTask(std::coroutine_handle<> hdl)
-        : coroutineHandle{hdl}
+    AsyncTask::AsyncTask(std::coroutine_handle<> hdl)
+        : mCoroutineHandle_{hdl}
     {
 
     }
 
-    IoTask::IoTask(IoTask&& rhs)
-        : coroutineHandle{rhs.coroutineHandle}
+    AsyncTask::AsyncTask(AsyncTask&& rhs)
+        : mCoroutineHandle_{rhs.mCoroutineHandle_}
     {
-        rhs.coroutineHandle = {};
+        rhs.mCoroutineHandle_ = {};
     }
 
-    IoTask& IoTask::operator=(IoTask&& rhs)
+    AsyncTask& AsyncTask::operator=(AsyncTask&& rhs)
     {
         if (this != &rhs)
         {
-            if (this->coroutineHandle)
+            if (this->mCoroutineHandle_)
             {
-                this->coroutineHandle.destroy();
+                this->mCoroutineHandle_.destroy();
             }
-            this->coroutineHandle = rhs.coroutineHandle;
-            rhs.coroutineHandle = {};
+            this->mCoroutineHandle_ = rhs.mCoroutineHandle_;
+            rhs.mCoroutineHandle_ = {};
         }
         return *this;
     }
 
-    void IoTask::resume()
+    AsyncTask::~AsyncTask()
     {
-        if (this->coroutineHandle)
+        if (this->mCoroutineHandle_)
         {
-            this->coroutineHandle.resume();
+            this->mCoroutineHandle_.destroy();
         }
     }
 
-    IoAwaiter::IoAwaiter(EventQueue* q, Connection* conn) 
+    void AsyncTask::resume()
+    {
+        if (this->mCoroutineHandle_)
+        {
+            this->mCoroutineHandle_.resume();
+        }
+    }
+
+    IoTaskAwaiter::IoTaskAwaiter(EventQueue* q, Connection* conn) 
         : isErr_{false}, mConn_{conn}, mEventQueue_{q}
     {
 
     }
 
-    bool IoAwaiter::await_ready() const noexcept
+    bool IoTaskAwaiter::await_ready() const noexcept
     { 
         return false; 
     }
 
-    void IoAwaiter::await_suspend(std::coroutine_handle<> handle) noexcept 
+    void IoTaskAwaiter::await_suspend(std::coroutine_handle<> handle) noexcept 
     {
         this->isErr_ = (this->mEventQueue_->submitIoEvent(this->mConn_) < 0);
     }
 
-    bool IoAwaiter::await_resume() const noexcept
+    bool IoTaskAwaiter::await_resume() const noexcept
     { 
         return this->isErr_; 
     }
 
-    IoService::IoService(Acceptor& acceptor)
-        : mAcceptor_{acceptor}
+    IoService::IoService(Acceptor& acceptor, std::size_t threadNum)
+        : mAcceptor_{acceptor}, mThreadPool_{threadNum}
     {
         this->mEventQueue_.submitAccept(this->mAcceptor_);
     }
@@ -110,53 +134,47 @@ namespace blitz
             }
             else if (conn->isAccept())
             {
-                this->mConns_.emplace(conn, this->asyncHandle(conn));
+                this->mConns_[conn] = this->asyncHandle(conn);
                 this->mEventQueue_.submitAccept(this->mAcceptor_);
             }
-            else if (conn->isRead())
+            else if (conn->isRead() || conn->isWrite())
             {
-                // 恢复协程
-                this->mConns_[conn].resume();
-            }
-            else if (conn->isWrite())
-            {
-                // 恢复协程
+                // 恢复IO协程
                 this->mConns_[conn].resume();
             }
             else if (conn->isTimeout())
             {
-
+                [this, conn]()->AsyncTask
+                {
+                    ASYNC_EXEC(this->mThreadPool_, conn, this->mTimeoutCb_);
+                }();
             }
         }
     }
 
-    IoTask IoService::asyncHandle(Connection* conn)
+    AsyncTask IoService::asyncHandle(Connection* conn)
     {
         if (!conn)  co_return;
         // 读入缓冲区
         conn->setEvent(EventType::READ);
-        bool err = co_await IoAwaiter{&this->mEventQueue_, conn};
-        if (err)
+        if (bool err = co_await IoTaskAwaiter{&this->mEventQueue_, conn}; err)
         {
             // 读入出错，执行错误回调
-            if (this->mErrCb_)  this->mErrCb_(conn);
-            std::cerr << "co_await READ: " << ::strerror(errno) << std::endl;
+            ASYNC_EXEC(this->mThreadPool_, conn, this->mErrCb_);
             co_return;
         }
-        // 在线程池中执行用户业务逻辑回调
-        if (this->mReadCb_) this->mReadCb_(conn);
+        // 在线程池中执行用户业务逻辑
+        ASYNC_EXEC(this->mThreadPool_, conn, this->mReadCb_);
         // 写入缓冲区
         conn->setEvent(EventType::WRITE);
-        err = co_await IoAwaiter{&this->mEventQueue_, conn};
-        if (err)
+        if (bool err = co_await IoTaskAwaiter{&this->mEventQueue_, conn}; err)
         {
             // 写入出错，执行错误回调
-            if (this->mErrCb_)  this->mErrCb_(conn);
-            std::cerr << "co_await WRITE: " << ::strerror(errno) << std::endl;
+            ASYNC_EXEC(this->mThreadPool_, conn, this->mErrCb_);
             co_return;
         }
-        // 在线程池中执行用户业务逻辑回调
-        if (this->mWriteCb_)    this->mWriteCb_(conn);
+        // 在线程池中执行用户业务逻辑
+        ASYNC_EXEC(this->mThreadPool_, conn, this->mWriteCb_);
         co_return;
     }
 }   // namespace blitz

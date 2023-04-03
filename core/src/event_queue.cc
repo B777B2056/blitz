@@ -9,7 +9,7 @@ namespace blitz
 {
 #ifdef __linux__
 
-    constexpr static int QUEUE_SIZE = 256;
+    constexpr static int QUEUE_SIZE = 512;
 
     LinuxEventQueue::LinuxEventQueue()
         : acceptorDescriptor_{-1}, mCompletionQueue_{nullptr}
@@ -52,9 +52,17 @@ namespace blitz
         }
         auto* event = reinterpret_cast<Event*>(::io_uring_cqe_get_data(this->mCompletionQueue_));
         Event* ret = nullptr;
-        if (!event || (this->mCompletionQueue_->res < 0)) 
+        if (!event) goto END;
+        if (this->mCompletionQueue_->res < 0)
         {
-            std::cerr << ::strerror(-this->mCompletionQueue_->res) << std::endl;
+            if (this->mCompletionQueue_->res == -ECONNRESET || this->mCompletionQueue_->res == -ENOTCONN)
+            {
+                this->closeConn(static_cast<Connection*>(event));
+            }
+            else
+            {
+                std::cerr << ::strerror(-this->mCompletionQueue_->res) << std::endl;
+            }
         }
         else
         {
@@ -71,6 +79,7 @@ namespace blitz
                 ret = this->handleIo(event);
             }
         }
+    END:
         ::io_uring_cqe_seen(&this->mRing_, this->mCompletionQueue_);
         return ret;
     }
@@ -151,7 +160,9 @@ namespace blitz
 
     void LinuxEventQueue::closeConn(Connection* conn)
     {
+        if (!conn)  return;
         auto* sqe = ::io_uring_get_sqe(&this->mRing_);
+        if (!sqe)   return;
         conn->setEvent(EventType::CLOSED);
         ::io_uring_prep_close(sqe, conn->socket());
         ::io_uring_sqe_set_data(sqe, conn);
