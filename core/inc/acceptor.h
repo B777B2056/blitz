@@ -22,8 +22,7 @@ namespace blitz
         void bind(std::uint16_t port);
         void listen(int backlog);
     };
-
-    using NativeSockAddr = sockaddr_in;
+    
     using AcceptorImpl = LinuxAcceptorImpl;
         
 #elif _WIN32
@@ -43,8 +42,6 @@ namespace blitz
         ~Acceptor();
 
         void listen(std::uint16_t port, int backlog = 5);
-        
-        NativeSockAddr& addr() noexcept { return this->impl_.addr; }
 
     private:
         AcceptorImpl impl_;

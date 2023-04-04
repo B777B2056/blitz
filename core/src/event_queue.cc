@@ -12,7 +12,7 @@ namespace blitz
     constexpr static int QUEUE_SIZE = 512;
 
     LinuxEventQueue::LinuxEventQueue()
-        : acceptorDescriptor_{-1}, mCompletionQueue_{nullptr}
+        : mCompletionQueue_{nullptr}
     {
         if (int err = ::io_uring_queue_init(QUEUE_SIZE, &this->mRing_, 0); 0 != err)
         {
@@ -57,7 +57,7 @@ namespace blitz
         {
             if (this->mCompletionQueue_->res == -ECONNRESET || this->mCompletionQueue_->res == -ENOTCONN)
             {
-                this->closeConn(static_cast<Connection*>(event));
+                this->submitCloseConn(static_cast<Connection*>(event));
             }
             else
             {
@@ -117,56 +117,64 @@ namespace blitz
         return event;
     }
 
+    static int SubmitHelper(struct io_uring* ring, struct io_uring_sqe* sqe, void* data)
+    {
+        ::io_uring_sqe_set_data(sqe, data);
+        return ::io_uring_submit(ring);
+    }
+
     int LinuxEventQueue::submitAccept(Acceptor& acceptor)
     {
-        socklen_t len;
         auto* sqe = ::io_uring_get_sqe(&this->mRing_);
-        if (!sqe)   return -1;
-        ::io_uring_prep_accept(sqe, acceptor.socket(), 
-                                reinterpret_cast<struct sockaddr*>(&acceptor.addr()), &len, 0);
-        ::io_uring_sqe_set_data(sqe, &acceptor);
-        this->acceptorDescriptor_ = acceptor.socket();
-        return ::io_uring_submit(&this->mRing_);
+        if (!sqe) 
+        {
+            return -1;
+        }
+        ::io_uring_prep_accept(sqe, acceptor.socket(), nullptr, nullptr, 0);
+        return SubmitHelper(&this->mRing_, sqe, &acceptor);
+    }
+
+    // 内核向用户读缓冲区写入数据
+    static void ReadFromKernel(struct io_uring_sqe* sqe, Connection* conn)
+    {
+        auto iovecs = conn->readBuffer().writeableArea2Iovecs();   
+        ::io_uring_prep_readv(sqe, conn->socket(), iovecs.data(), iovecs.size(), 0);
+    }
+
+    // 内核从用户写缓冲区读出数据
+    static void WriteIntoKernel(struct io_uring_sqe* sqe, Connection* conn)
+    {
+        auto iovecs = conn->writeBuffer().readableArea2Iovecs();   
+        ::io_uring_prep_writev(sqe, conn->socket(), iovecs.data(), iovecs.size(), 0);
     }
 
     int LinuxEventQueue::submitIoEvent(Connection* conn)
     {
-        if (!conn)  return -1;
         auto* sqe = ::io_uring_get_sqe(&this->mRing_);
-        if (!sqe)   return -1;
+        if (!sqe)
+        {
+            return -1;
+        }
         if (conn->isRead())
         {
-            this->readFromKernel(sqe, conn);
+            ReadFromKernel(sqe, conn);
         }
         else if (conn->isWrite())
         {
-            this->writeIntoKernel(sqe, conn);
+            WriteIntoKernel(sqe, conn);
         }
-        ::io_uring_sqe_set_data(sqe, conn);
-        return ::io_uring_submit(&this->mRing_);
+        return SubmitHelper(&this->mRing_, sqe, conn);
     }
 
-    void LinuxEventQueue::readFromKernel(struct io_uring_sqe* sqe, Connection* conn)
+    int LinuxEventQueue::submitCloseConn(Connection* conn)
     {
-        auto iovecs = conn->readBuffer().writeableArea2Iovecs();   // 内核向用户读缓冲区写入数据
-        ::io_uring_prep_readv(sqe, conn->socket(), iovecs.data(), iovecs.size(), 0);
-    }
-
-    void LinuxEventQueue::writeIntoKernel(struct io_uring_sqe* sqe, Connection* conn)
-    {
-        auto iovecs = conn->writeBuffer().readableArea2Iovecs();   // 内核从用户写缓冲区读出数据
-        ::io_uring_prep_writev(sqe, conn->socket(), iovecs.data(), iovecs.size(), 0);
-    }
-
-    void LinuxEventQueue::closeConn(Connection* conn)
-    {
-        if (!conn)  return;
         auto* sqe = ::io_uring_get_sqe(&this->mRing_);
-        if (!sqe)   return;
-        conn->setEvent(EventType::CLOSED);
+        if (!sqe)
+        {
+            return -1;
+        }
         ::io_uring_prep_close(sqe, conn->socket());
-        ::io_uring_sqe_set_data(sqe, conn);
-        ::io_uring_submit(&this->mRing_);
+        return SubmitHelper(&this->mRing_, sqe, conn);
     }
 
 #elif _WIN32

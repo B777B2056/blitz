@@ -97,6 +97,7 @@ namespace blitz
 
     void IoTaskAwaiter::await_suspend(std::coroutine_handle<> handle) noexcept 
     {
+        if (!this->mConn_)  return;
         this->isErr_ = (this->mEventQueue_->submitIoEvent(this->mConn_) < 0);
     }
 
@@ -118,7 +119,9 @@ namespace blitz
 
     void IoService::closeConn(Connection* conn)
     {
-        this->mEventQueue_.closeConn(conn);
+        if (!conn)  return;
+        conn->setEvent(EventType::CLOSED);
+        this->mEventQueue_.submitCloseConn(conn);
     }
 
     void IoService::run()

@@ -30,10 +30,9 @@ namespace blitz
         Event* waitCompletionEvent();
         int submitAccept(Acceptor& acceptor);
         int submitIoEvent(Connection* conn);
-        void closeConn(Connection* conn);
+        int submitCloseConn(Connection* conn);
 
     private:
-        SocketDescriptor acceptorDescriptor_;
         struct io_uring mRing_;
         struct io_uring_cqe* mCompletionQueue_;
 
@@ -43,9 +42,6 @@ namespace blitz
 
         struct iovec* chainBuffer2ReadIovecs(ChainBuffer& buf, std::size_t& len);
         struct iovec* chainBuffer2WriteIovecs(ChainBuffer& buf, std::size_t& len);
-
-        void readFromKernel(struct io_uring_sqe* sqe, Connection* conn);
-        void writeIntoKernel(struct io_uring_sqe* sqe, Connection* conn);
     };
 
     using EventQueueImpl = LinuxEventQueue;
@@ -86,7 +82,7 @@ namespace blitz
         Event* waitCompletionEvent() { return impl_.waitCompletionEvent(); }
         int submitAccept(Acceptor& acceptor) { return impl_.submitAccept(acceptor); }
         int submitIoEvent(Connection* conn) { return impl_.submitIoEvent(conn); }
-        void closeConn(Connection* conn) { impl_.closeConn(conn); }
+        void submitCloseConn(Connection* conn) { impl_.submitCloseConn(conn); }
     
     private:
         EventQueueImpl impl_;
