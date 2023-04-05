@@ -17,7 +17,7 @@ namespace blitz
         if (int err = ::io_uring_queue_init(QUEUE_SIZE, &this->mRing_, 0); 0 != err)
         {
             errno = -err;
-            throw std::system_error(make_error_code(SocketError::InternalError));
+            throw std::system_error(make_error_code(ErrorCode::InternalError));
         }
     }
 
@@ -43,12 +43,13 @@ namespace blitz
         ::io_uring_queue_exit(&this->mRing_);
     }
 
-    Event* LinuxEventQueue::waitCompletionEvent()
+    Event* LinuxEventQueue::waitCompletionEvent(std::error_code& ec)
     {
+        ec = ErrorCode::Success;
         if (int err = ::io_uring_wait_cqe(&this->mRing_, &this->mCompletionQueue_); 0 != err) 
         {
             errno = -err;
-            throw std::system_error(make_error_code(SocketError::InternalError));
+            throw std::system_error(ErrorCode::InternalError);
         }
         auto* event = reinterpret_cast<Event*>(::io_uring_cqe_get_data(this->mCompletionQueue_));
         Event* ret = nullptr;
@@ -57,11 +58,12 @@ namespace blitz
         {
             if (this->mCompletionQueue_->res == -ECONNRESET || this->mCompletionQueue_->res == -ENOTCONN)
             {
-                this->submitCloseConn(static_cast<Connection*>(event));
+                ec = ErrorCode::PeerClosed;
             }
             else
             {
-                std::cerr << ::strerror(-this->mCompletionQueue_->res) << std::endl;
+                errno = -this->mCompletionQueue_->res;
+                ec = ErrorCode::InternalError;
             }
         }
         else
@@ -123,15 +125,23 @@ namespace blitz
         return ::io_uring_submit(ring);
     }
 
-    int LinuxEventQueue::submitAccept(Acceptor& acceptor)
+    std::error_code LinuxEventQueue::submitAccept(Acceptor& acceptor)
     {
         auto* sqe = ::io_uring_get_sqe(&this->mRing_);
         if (!sqe) 
         {
-            return -1;
+            return make_error_code(ErrorCode::SubmitQueueFull);
         }
         ::io_uring_prep_accept(sqe, acceptor.socket(), nullptr, nullptr, 0);
-        return SubmitHelper(&this->mRing_, sqe, &acceptor);
+        if (int ret = SubmitHelper(&this->mRing_, sqe, &acceptor); ret < 0)
+        {
+            errno = -ret;
+            return make_error_code(ErrorCode::InternalError);
+        }
+        else
+        {
+            return make_error_code(ErrorCode::Success);
+        }
     }
 
     // 内核向用户读缓冲区写入数据
@@ -148,12 +158,12 @@ namespace blitz
         ::io_uring_prep_writev(sqe, conn->socket(), iovecs.data(), iovecs.size(), 0);
     }
 
-    int LinuxEventQueue::submitIoEvent(Connection* conn)
+    std::error_code LinuxEventQueue::submitIoEvent(Connection* conn)
     {
         auto* sqe = ::io_uring_get_sqe(&this->mRing_);
         if (!sqe)
         {
-            return -1;
+            return make_error_code(ErrorCode::SubmitQueueFull);
         }
         if (conn->isRead())
         {
@@ -163,18 +173,34 @@ namespace blitz
         {
             WriteIntoKernel(sqe, conn);
         }
-        return SubmitHelper(&this->mRing_, sqe, conn);
+        if (int ret = SubmitHelper(&this->mRing_, sqe, conn); ret < 0)
+        {
+            errno = -ret;
+            return make_error_code(ErrorCode::InternalError);
+        }
+        else
+        {
+            return make_error_code(ErrorCode::Success);
+        }
     }
 
-    int LinuxEventQueue::submitCloseConn(Connection* conn)
+    std::error_code LinuxEventQueue::submitCloseConn(Connection* conn)
     {
         auto* sqe = ::io_uring_get_sqe(&this->mRing_);
         if (!sqe)
         {
-            return -1;
+            return make_error_code(ErrorCode::SubmitQueueFull);
         }
         ::io_uring_prep_close(sqe, conn->socket());
-        return SubmitHelper(&this->mRing_, sqe, conn);
+        if (int ret = SubmitHelper(&this->mRing_, sqe, conn); ret < 0)
+        {
+            errno = -ret;
+            return make_error_code(ErrorCode::InternalError);
+        }
+        else
+        {
+            return make_error_code(ErrorCode::Success);
+        }
     }
 
 #elif _WIN32

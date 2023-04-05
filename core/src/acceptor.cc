@@ -13,7 +13,7 @@ namespace blitz
     {
         if (-1 == sockfd)
         {
-            throw std::system_error(make_error_code(SocketError::InternalError));
+            throw std::system_error(make_error_code(ErrorCode::InternalError));
         }
     }
 
@@ -25,7 +25,7 @@ namespace blitz
         addr.sin_addr.s_addr = ::htonl(INADDR_ANY);
         if (-1 == ::bind(sockfd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)))
         {
-            throw std::system_error(make_error_code(SocketError::InternalError));
+            throw std::system_error(make_error_code(ErrorCode::InternalError));
         }
     }
 
@@ -33,7 +33,7 @@ namespace blitz
     {
         if (-1 == ::listen(sockfd, backlog))
         {
-            throw std::system_error(make_error_code(SocketError::InternalError));
+            throw std::system_error(make_error_code(ErrorCode::InternalError));
         }
     }
         

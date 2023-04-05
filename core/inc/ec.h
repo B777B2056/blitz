@@ -4,15 +4,16 @@
 
 namespace blitz
 {
-    enum class SocketError : std::uint8_t 
+    enum class ErrorCode : std::uint8_t 
     {
         Success = 0,
+        SubmitQueueFull,
         PeerClosed,
         InternalError,
         // Other error
     };
 
-    class SocketErrorCategory : public std::error_category
+    class ErrorCodeCategory : public std::error_category
     {
     public:
         std::string message(int c) const override;
@@ -20,14 +21,14 @@ namespace blitz
         static const std::error_category& get();
 
     private:
-        SocketErrorCategory() = default;
+        ErrorCodeCategory() = default;
     };
 
-    std::error_code make_error_code(blitz::SocketError ec);
+    std::error_code make_error_code(blitz::ErrorCode ec);
 }   // namespace blitz
 
 namespace std
 {
     template <>
-    struct is_error_code_enum<blitz::SocketError> : true_type {};
+    struct is_error_code_enum<blitz::ErrorCode> : true_type {};
 }

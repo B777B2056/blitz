@@ -1,6 +1,7 @@
 #include <string>
 #include <csignal>
 #include <cstdio>
+#include <iostream>
 #include "io_service.h"
 #include "connection.h"
 
@@ -27,7 +28,7 @@ int main()
         while (state != 4)
         {
             conn->read(std::span{&ch, 1}, ec);
-            if (ec == blitz::SocketError::PeerClosed)
+            if (ec == blitz::ErrorCode::PeerClosed)
             {
                 return;
             }
@@ -45,6 +46,10 @@ int main()
     svr.registWriteCallback([&svr](blitz::Connection* conn)->void
     {
         svr.closeConn(conn);
+    });
+    svr.registErrorCallback([](blitz::Connection* conn, std::error_code ec)->void
+    {
+        std::cout << ec.message() << std::endl;
     });
     svr.run();
     return 0;

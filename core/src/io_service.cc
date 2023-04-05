@@ -4,18 +4,18 @@
 #include <iostream>
 #include "connection.h"
 
-#define ASYNC_EXEC(THREAD_POOL, CONN, CB)   \
+#define ASYNC_EXEC(THREAD_POOL, CB, ARGS...)   \
     if (CB)  \
     {   \
         if (0 == THREAD_POOL.threadNum())    \
         {   \
-            CB(CONN);    \
+            CB(ARGS);    \
         }   \
         else    \
         {   \
-            co_await MultiThreadTaskAwaiter{&THREAD_POOL, [CONN, this]()->void   \
+            co_await MultiThreadTaskAwaiter{&THREAD_POOL, [ARGS, this]()->void   \
             {   \
-                CB(CONN);    \
+                CB(ARGS);    \
             }}; \
         }   \
     }   \
@@ -85,7 +85,7 @@ namespace blitz
     }
 
     IoTaskAwaiter::IoTaskAwaiter(EventQueue* q, Connection* conn) 
-        : isErr_{false}, mConn_{conn}, mEventQueue_{q}
+        : ec{make_error_code(ErrorCode::Success)}, mConn_{conn}, mEventQueue_{q}
     {
 
     }
@@ -98,12 +98,12 @@ namespace blitz
     void IoTaskAwaiter::await_suspend(std::coroutine_handle<> handle) noexcept 
     {
         if (!this->mConn_)  return;
-        this->isErr_ = (this->mEventQueue_->submitIoEvent(this->mConn_) < 0);
+        this->ec = this->mEventQueue_->submitIoEvent(this->mConn_);
     }
 
-    bool IoTaskAwaiter::await_resume() const noexcept
+    std::error_code IoTaskAwaiter::await_resume() const noexcept
     { 
-        return this->isErr_; 
+        return this->ec; 
     }
 
     IoService::IoService(Acceptor& acceptor, std::size_t threadNum)
@@ -126,10 +126,19 @@ namespace blitz
 
     void IoService::run()
     {
+        std::error_code ec;
         for (;;)
         {
-            auto* conn = static_cast<Connection*>(this->mEventQueue_.waitCompletionEvent());
+            auto* conn = static_cast<Connection*>(this->mEventQueue_.waitCompletionEvent(ec));
             if (!conn)  continue;
+            if (ec != ErrorCode::Success)
+            {
+                [this, conn, ec]()->AsyncTask
+                {   
+                    ASYNC_EXEC(this->mThreadPool_, this->mErrCb_, conn, ec);
+                }();
+                continue;
+            }
             if (conn->isClosed())
             {
                 this->mConns_.erase(conn);
@@ -149,7 +158,7 @@ namespace blitz
             {
                 [this, conn]()->AsyncTask
                 {
-                    ASYNC_EXEC(this->mThreadPool_, conn, this->mTimeoutCb_);
+                    ASYNC_EXEC(this->mThreadPool_, this->mTimeoutCb_, conn);
                 }();
             }
         }
@@ -160,24 +169,25 @@ namespace blitz
         if (!conn)  co_return;
         // 读入缓冲区
         conn->setEvent(EventType::READ);
-        if (bool err = co_await IoTaskAwaiter{&this->mEventQueue_, conn}; err)
+        if (auto ec = co_await IoTaskAwaiter{&this->mEventQueue_, conn}; ec != ErrorCode::Success)
         {
             // 读入出错，执行错误回调
-            ASYNC_EXEC(this->mThreadPool_, conn, this->mErrCb_);
+            ASYNC_EXEC(this->mThreadPool_, this->mErrCb_, conn, ec);
             co_return;
         }
         // 在线程池中执行用户业务逻辑
-        ASYNC_EXEC(this->mThreadPool_, conn, this->mReadCb_);
+        ASYNC_EXEC(this->mThreadPool_, this->mReadCb_, conn);
         // 写入缓冲区
+        if (!conn)  co_return;
         conn->setEvent(EventType::WRITE);
-        if (bool err = co_await IoTaskAwaiter{&this->mEventQueue_, conn}; err)
+        if (auto ec = co_await IoTaskAwaiter{&this->mEventQueue_, conn}; ec != ErrorCode::Success)
         {
             // 写入出错，执行错误回调
-            ASYNC_EXEC(this->mThreadPool_, conn, this->mErrCb_);
+            ASYNC_EXEC(this->mThreadPool_, this->mErrCb_, conn, ec);
             co_return;
         }
         // 在线程池中执行用户业务逻辑
-        ASYNC_EXEC(this->mThreadPool_, conn, this->mWriteCb_);
+        ASYNC_EXEC(this->mThreadPool_, this->mWriteCb_, conn);
         co_return;
     }
 }   // namespace blitz

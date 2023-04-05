@@ -27,10 +27,10 @@ namespace blitz
         LinuxEventQueue& operator=(LinuxEventQueue&& rhs);
         ~LinuxEventQueue();
 
-        Event* waitCompletionEvent();
-        int submitAccept(Acceptor& acceptor);
-        int submitIoEvent(Connection* conn);
-        int submitCloseConn(Connection* conn);
+        Event* waitCompletionEvent(std::error_code& ec);
+        std::error_code submitAccept(Acceptor& acceptor);
+        std::error_code submitIoEvent(Connection* conn);
+        std::error_code submitCloseConn(Connection* conn);
 
     private:
         struct io_uring mRing_;
@@ -58,9 +58,10 @@ namespace blitz
         WinEventQueue& operator=(WinEventQueue&& rhs);
         ~WinEventQueue();
 
-        Event* waitCompletionEvent();
-        int submitAccept(Acceptor& acceptor);
-        int submitIoEvent(Connection* conn);
+        Event* waitCompletionEvent(std::error_code& ec);
+        std::error_code submitAccept(Acceptor& acceptor);
+        std::error_code submitIoEvent(Connection* conn);
+        std::error_code submitCloseConn(Connection* conn);
 
     private:
     };
@@ -79,10 +80,10 @@ namespace blitz
         EventQueue& operator=(EventQueue&&) = default;
         ~EventQueue() = default;
 
-        Event* waitCompletionEvent() { return impl_.waitCompletionEvent(); }
-        int submitAccept(Acceptor& acceptor) { return impl_.submitAccept(acceptor); }
-        int submitIoEvent(Connection* conn) { return impl_.submitIoEvent(conn); }
-        void submitCloseConn(Connection* conn) { impl_.submitCloseConn(conn); }
+        Event* waitCompletionEvent(std::error_code& ec) { return impl_.waitCompletionEvent(ec); }
+        std::error_code submitAccept(Acceptor& acceptor) { return impl_.submitAccept(acceptor); }
+        std::error_code submitIoEvent(Connection* conn) { return impl_.submitIoEvent(conn); }
+        std::error_code submitCloseConn(Connection* conn) { return impl_.submitCloseConn(conn); }
     
     private:
         EventQueueImpl impl_;

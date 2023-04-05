@@ -3,6 +3,7 @@
 #include <functional>
 #include <unordered_map>
 #include "acceptor.h"
+#include "ec.h"
 #include "event_queue.h"
 #include "threadpool.h"
 
@@ -41,17 +42,18 @@ namespace blitz
     public:
         bool await_ready() const noexcept;
         void await_suspend(std::coroutine_handle<> handle) noexcept;
-        bool await_resume() const noexcept;
+        std::error_code await_resume() const noexcept;
 
         IoTaskAwaiter(EventQueue* q, Connection* channel);
 
     private:
-        bool isErr_;
+        std::error_code ec;
         Connection* mConn_;
         EventQueue* mEventQueue_;
     };
 
     using IoEventCallback = std::function<void(Connection* conn)>;
+    using ErrorCallback = std::function<void(Connection* conn, std::error_code ec)>;
 
     class IoService
     {
@@ -66,7 +68,7 @@ namespace blitz
 
         void registReadCallback(IoEventCallback cb) noexcept { this->mReadCb_ = cb; }
         void registWriteCallback(IoEventCallback cb) noexcept { this->mWriteCb_ = cb; }
-        void registErrorCallback(IoEventCallback cb) noexcept { this->mErrCb_ = cb; }
+        void registErrorCallback(ErrorCallback cb) noexcept { this->mErrCb_ = cb; }
         void registTimeoutCallback(IoEventCallback cb) noexcept { this->mTimeoutCb_ = cb; }
 
         void run();
@@ -75,7 +77,8 @@ namespace blitz
     private:
         Acceptor& mAcceptor_;
         EventQueue mEventQueue_;
-        IoEventCallback mReadCb_, mWriteCb_, mErrCb_, mTimeoutCb_;
+        ErrorCallback mErrCb_;
+        IoEventCallback mReadCb_, mWriteCb_, mTimeoutCb_;
         ThreadPool mThreadPool_;
         std::unordered_map<Connection*, AsyncTask> mConns_;
 

@@ -4,35 +4,38 @@
 
 namespace blitz
 {
-    std::string SocketErrorCategory::message(int c) const
+    std::string ErrorCodeCategory::message(int c) const
     {
-        switch (static_cast<SocketError>(c))
+        switch (static_cast<ErrorCode>(c))
         {
-        case SocketError::Success:
+        case ErrorCode::Success:
             return "Success";
+
+        case ErrorCode::SubmitQueueFull:
+            return "SubmitQueueFull";
     
-        case SocketError::PeerClosed:
+        case ErrorCode::PeerClosed:
             return "Peer closed";
     
-        case SocketError::InternalError:
+        case ErrorCode::InternalError:
             return ::strerror(errno);
         }
         return "Invalid Error Code";
     }
 
-    const char* SocketErrorCategory::name() const noexcept
+    const char* ErrorCodeCategory::name() const noexcept
     {
         return "Socket Error Category";
     }
 
-    const std::error_category& SocketErrorCategory::get()
+    const std::error_category& ErrorCodeCategory::get()
     {
-        const static SocketErrorCategory sCategory;
+        const static ErrorCodeCategory sCategory;
         return sCategory;
     }
 
-    std::error_code make_error_code(blitz::SocketError ec)
+    std::error_code make_error_code(blitz::ErrorCode ec)
     {
-        return std::error_code(static_cast<int>(ec), blitz::SocketErrorCategory::get());
+        return std::error_code(static_cast<int>(ec), blitz::ErrorCodeCategory::get());
     }
 }   // namespace blitz
