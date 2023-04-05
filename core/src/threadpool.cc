@@ -15,9 +15,13 @@ namespace blitz
                     std::function<void()> task;
                     {
                         std::unique_lock lock{this->mMutex_};
-                        while (this->mTaskQueue_.empty())
+                        while ((!stoken.stop_requested()) && this->mTaskQueue_.empty())
                         {
                             this->mCv_.wait(lock);
+                        }
+                        if (stoken.stop_requested())
+                        {
+                            break;
                         }
                         task = this->mTaskQueue_.front();
                         this->mTaskQueue_.pop();
@@ -34,7 +38,6 @@ namespace blitz
         for (auto& t : this->mThreads_)
         {
             t.request_stop();
-            t.join();
         }
         this->mCv_.notify_all();
     }

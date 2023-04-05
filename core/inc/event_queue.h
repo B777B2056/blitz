@@ -1,10 +1,10 @@
 #pragma once
-
 #ifdef __linux__
 #include <liburing.h>
 #elif _WIN32
 
 #endif
+
 #include "common.h"
 #include "ec.h"
 
@@ -31,13 +31,13 @@ namespace blitz
         std::error_code submitAccept(Acceptor& acceptor);
         std::error_code submitIoEvent(Connection* conn);
         std::error_code submitCloseConn(Connection* conn);
+        std::error_code submitSysSignal(int sig);
 
     private:
         struct io_uring mRing_;
         struct io_uring_cqe* mCompletionQueue_;
 
         Event* handleAccept(Event* event);
-        Event* handleClosed(Event* event);
         Event* handleIo(Event* event);
 
         struct iovec* chainBuffer2ReadIovecs(ChainBuffer& buf, std::size_t& len);
@@ -84,6 +84,7 @@ namespace blitz
         std::error_code submitAccept(Acceptor& acceptor) { return impl_.submitAccept(acceptor); }
         std::error_code submitIoEvent(Connection* conn) { return impl_.submitIoEvent(conn); }
         std::error_code submitCloseConn(Connection* conn) { return impl_.submitCloseConn(conn); }
+        std::error_code submitSysSignal(int sig) { return impl_.submitSysSignal(sig); }
     
     private:
         EventQueueImpl impl_;

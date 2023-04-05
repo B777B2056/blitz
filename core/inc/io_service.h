@@ -7,6 +7,12 @@
 #include "event_queue.h"
 #include "threadpool.h"
 
+#ifdef __linux__
+    #define SIGNAL_NUM 32
+#elif _WIN32
+    #define SIGNAL_NUM 6
+#endif
+
 namespace blitz
 {
     // 将任务（Channel）提交到SQE（提交队列）后挂起协程
@@ -52,6 +58,7 @@ namespace blitz
         EventQueue* mEventQueue_;
     };
 
+    using SignalCallback = std::function<void()>;
     using IoEventCallback = std::function<void(Connection* conn)>;
     using ErrorCallback = std::function<void(Connection* conn, std::error_code ec)>;
 
@@ -70,15 +77,19 @@ namespace blitz
         void registWriteCallback(IoEventCallback cb) noexcept { this->mWriteCb_ = cb; }
         void registErrorCallback(ErrorCallback cb) noexcept { this->mErrCb_ = cb; }
         void registTimeoutCallback(IoEventCallback cb) noexcept { this->mTimeoutCb_ = cb; }
+        void registSignalCallback(int sig, SignalCallback cb) noexcept;
 
         void run();
+        void stop() { this->mIsLoopStop_ = true; }
         void closeConn(Connection* conn);
 
     private:
+        bool mIsLoopStop_{false};
         Acceptor& mAcceptor_;
         EventQueue mEventQueue_;
         ErrorCallback mErrCb_;
         IoEventCallback mReadCb_, mWriteCb_, mTimeoutCb_;
+        SignalCallback mSignalCbs_[SIGNAL_NUM];
         ThreadPool mThreadPool_;
         std::unordered_map<Connection*, AsyncTask> mConns_;
 

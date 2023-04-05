@@ -1,8 +1,8 @@
 #include "io_service.h"
 #include <cerrno>
 #include <cstring>
-#include <iostream>
 #include "connection.h"
+#include "sig_handler.h"
 
 #define ASYNC_EXEC(THREAD_POOL, CB, ARGS...)   \
     if (CB)  \
@@ -107,7 +107,7 @@ namespace blitz
     }
 
     IoService::IoService(Acceptor& acceptor, std::size_t threadNum)
-        : mAcceptor_{acceptor}, mThreadPool_{threadNum}
+        : mIsLoopStop_{false}, mAcceptor_{acceptor}, mThreadPool_{threadNum}
     {
         this->mEventQueue_.submitAccept(this->mAcceptor_);
     }
@@ -124,13 +124,27 @@ namespace blitz
         this->mEventQueue_.submitCloseConn(conn);
     }
 
+    void IoService::registSignalCallback(int sig, SignalCallback cb) noexcept 
+    { 
+        this->mSignalCbs_[sig] = cb; 
+        this->mEventQueue_.submitSysSignal(sig);
+    }
+
     void IoService::run()
     {
         std::error_code ec;
-        for (;;)
+        while (!this->mIsLoopStop_)
         {
-            auto* conn = static_cast<Connection*>(this->mEventQueue_.waitCompletionEvent(ec));
-            if (!conn)  continue;
+            auto* event = this->mEventQueue_.waitCompletionEvent(ec);
+            if (!event)  continue;
+            if (event->isSignal())
+            {
+                auto* sigEv = static_cast<SignalHandler*>(event);
+                auto cb = this->mSignalCbs_[sigEv->signal()];
+                if (cb) cb();
+                continue;
+            }
+            auto* conn = static_cast<Connection*>(event);
             if (ec != ErrorCode::Success)
             {
                 [this, conn, ec]()->AsyncTask
