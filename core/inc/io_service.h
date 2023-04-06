@@ -6,6 +6,7 @@
 #include "ec.h"
 #include "event_queue.h"
 #include "threadpool.h"
+#include "timer.h"
 
 #ifdef __linux__
     #define SIGNAL_NUM 32
@@ -66,7 +67,7 @@ namespace blitz
     {
     public:
         IoService() = delete;
-        IoService(Acceptor& acceptor, std::size_t threadNum);
+        IoService(Acceptor& acceptor, std::size_t threadNum, std::chrono::milliseconds tickMs);
         IoService(const IoService&) = delete;
         IoService& operator=(const IoService&) = delete;
         IoService(IoService&&) = default;
@@ -76,7 +77,7 @@ namespace blitz
         void registReadCallback(IoEventCallback cb) noexcept { this->mReadCb_ = cb; }
         void registWriteCallback(IoEventCallback cb) noexcept { this->mWriteCb_ = cb; }
         void registErrorCallback(ErrorCallback cb) noexcept { this->mErrCb_ = cb; }
-        void registTimeoutCallback(IoEventCallback cb) noexcept { this->mTimeoutCb_ = cb; }
+        void registTimeoutCallback(TimeoutCallback cb, std::chrono::milliseconds timeoutMs) noexcept;
         void registSignalCallback(int sig, SignalCallback cb) noexcept;
 
         void run();
@@ -87,10 +88,12 @@ namespace blitz
         bool mIsLoopStop_{false};
         Acceptor& mAcceptor_;
         EventQueue mEventQueue_;
+        Timer mTimer_;
         ErrorCallback mErrCb_;
-        IoEventCallback mReadCb_, mWriteCb_, mTimeoutCb_;
+        IoEventCallback mReadCb_, mWriteCb_;
         SignalCallback mSignalCbs_[SIGNAL_NUM];
         ThreadPool mThreadPool_;
+        std::chrono::milliseconds mTickMs_;
         std::unordered_map<Connection*, AsyncTask> mConns_;
 
         AsyncTask asyncHandle(Connection* conn);

@@ -1,6 +1,7 @@
 #pragma once
 #ifdef __linux__
 #include <liburing.h>
+#include <sys/timerfd.h>
 #elif _WIN32
 
 #endif
@@ -16,6 +17,46 @@ namespace blitz
     class Event;
 
 #ifdef __linux__
+
+    class SignalEvent : public Event
+    {
+    public:
+        SignalEvent(const SignalEvent&) = delete;
+        SignalEvent& operator=(const SignalEvent&) = delete;
+        ~SignalEvent();
+
+        static SignalEvent& instance() noexcept;
+        static void SignalHandle(int sig) noexcept;
+
+        int& curSignal() noexcept;
+        int readPipe() noexcept;
+
+    private:
+        static int curSig;
+        static int sigFd[2];
+        SignalEvent();
+    };
+
+    class TickEvent : public Event
+    {
+    public:
+        TickEvent(const TickEvent&) = delete;
+        TickEvent& operator=(const TickEvent&) = delete;
+        ~TickEvent();
+        static TickEvent& instance() noexcept;
+
+        void setTimer(int tickTimeMs);
+        void stopTimer();
+
+        int fd();
+        std::uint64_t& tickCount();
+
+    private:
+        static int timerFd;
+        static std::uint64_t timeoutCnt;
+        static struct itimerspec ts;
+        TickEvent();
+    };
     
     class LinuxEventQueue
     {
@@ -32,6 +73,7 @@ namespace blitz
         std::error_code submitIoEvent(Connection* conn);
         std::error_code submitCloseConn(Connection* conn);
         std::error_code submitSysSignal(int sig);
+        std::error_code submitTimerTick();
 
     private:
         struct io_uring mRing_;
@@ -62,6 +104,8 @@ namespace blitz
         std::error_code submitAccept(Acceptor& acceptor);
         std::error_code submitIoEvent(Connection* conn);
         std::error_code submitCloseConn(Connection* conn);
+        std::error_code submitSysSignal(int sig);
+        std::error_code submitTimerTick();
 
     private:
     };
@@ -85,6 +129,7 @@ namespace blitz
         std::error_code submitIoEvent(Connection* conn) { return impl_.submitIoEvent(conn); }
         std::error_code submitCloseConn(Connection* conn) { return impl_.submitCloseConn(conn); }
         std::error_code submitSysSignal(int sig) { return impl_.submitSysSignal(sig); }
+        std::error_code submitTimerTick() { return impl_.submitTimerTick(); }
     
     private:
         EventQueueImpl impl_;

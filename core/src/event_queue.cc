@@ -11,20 +11,98 @@
 
 #include "acceptor.h"
 #include "connection.h"
-#include "sig_handler.h"
 
 namespace blitz
 {
 #ifdef __linux__
-    static int SIGNAL_FD[2];
-    static int CURRENT_SIGNAL;
-    static SignalHandler SignalEvent{0};
     constexpr static int QUEUE_SIZE = 512;
 
-    static void SignalHandle(int sig) noexcept 
-    {
-        ::write(SIGNAL_FD[1], &sig, sizeof(sig));
+    int SignalEvent::curSig;
+    int SignalEvent::sigFd[2];
+
+    SignalEvent::SignalEvent() 
+        : Event{0} 
+    { 
+        this->setEvent(EventType::SIGNAL); 
+        if (0 != ::pipe(sigFd))
+        {
+            throw std::system_error(make_error_code(ErrorCode::InternalError));
+        }
+        int old_option = ::fcntl(sigFd[1], F_GETFL);
+        ::fcntl(sigFd[1], F_SETFL, old_option | O_NONBLOCK);
     }
+
+    SignalEvent::~SignalEvent()
+    {
+        ::close(sigFd[0]);
+        ::close(sigFd[1]);
+    }
+
+    SignalEvent& SignalEvent::instance() noexcept 
+    { 
+        static SignalEvent ev; 
+        return ev; 
+    }
+
+    void SignalEvent::SignalHandle(int sig) noexcept 
+    {
+        ::write(SignalEvent::sigFd[1], &sig, sizeof(sig));
+    }
+
+    int& SignalEvent::curSignal() noexcept { return curSig; }
+    int SignalEvent::readPipe() noexcept { return sigFd[0]; }
+
+    int TickEvent::timerFd;
+    std::uint64_t TickEvent::timeoutCnt;
+    struct itimerspec TickEvent::ts;
+
+    TickEvent::TickEvent()
+        : Event{0}
+    {
+        if (timerFd = ::timerfd_create(CLOCK_MONOTONIC, 0); -1 == timerFd)
+        {
+            throw std::system_error(make_error_code(ErrorCode::InternalError));
+        }
+        this->setEvent(EventType::TIMEOUT);
+    }
+
+    TickEvent::~TickEvent()
+    {
+        ::close(timerFd);
+    }
+
+    TickEvent& TickEvent::instance() noexcept
+    {
+        static TickEvent ev; 
+        return ev;
+    }
+
+    int TickEvent::fd() { return timerFd; }
+    std::uint64_t& TickEvent::tickCount() { return timeoutCnt; }
+
+    void TickEvent::setTimer(int tickTimeMs)
+	{
+        ts.it_interval.tv_sec = 0;
+        ts.it_interval.tv_nsec = 0;
+        ts.it_value.tv_sec = tickTimeMs / 1000;
+        ts.it_value.tv_nsec = (tickTimeMs % 1000) * 1000000;
+        if (-1 == ::timerfd_settime(timerFd, 0, &ts, nullptr)) 
+        {
+            ::close(timerFd);
+        }
+	}
+
+	void TickEvent::stopTimer()
+	{
+        ts.it_interval.tv_sec = 0;
+        ts.it_interval.tv_nsec = 0;
+        ts.it_value.tv_sec = 0;
+        ts.it_value.tv_nsec = 0;
+        if (-1 == ::timerfd_settime(timerFd, 0, &ts, nullptr)) 
+        {
+            ::close(timerFd);
+        }
+	}
 
     LinuxEventQueue::LinuxEventQueue()
         : mCompletionQueue_{nullptr}
@@ -34,12 +112,6 @@ namespace blitz
             errno = -err;
             throw std::system_error(make_error_code(ErrorCode::InternalError));
         }
-        if (0 != ::pipe(SIGNAL_FD))
-        {
-            throw std::system_error(make_error_code(ErrorCode::InternalError));
-        }
-        int old_option = ::fcntl(SIGNAL_FD[1], F_GETFL);
-        ::fcntl(SIGNAL_FD[1], F_SETFL, old_option | O_NONBLOCK);
     }
 
     LinuxEventQueue::LinuxEventQueue(LinuxEventQueue&& rhs)
@@ -95,15 +167,9 @@ namespace blitz
                 {
                     ret = this->handleAccept(event);
                 } 
-                else if (event->isClosed())
+                else if (event->isClosed() || event->isSignal() || event->isTick())
                 {
                     ret = event;
-                }
-                else if (event->isSignal())
-                {
-                    auto sigEv = static_cast<SignalHandler*>(event);
-                    sigEv->setSignal(CURRENT_SIGNAL);
-                    ret = sigEv;
                 }
                 else
                 {
@@ -149,11 +215,11 @@ namespace blitz
         if (int ret = ::io_uring_submit(ring); ret < 0)
         {
             errno = -ret;
-            return make_error_code(ErrorCode::InternalError);
+            return ErrorCode::InternalError;
         }
         else
         {
-            return make_error_code(ErrorCode::Success);
+            return ErrorCode::Success;
         }
     }
 
@@ -162,7 +228,7 @@ namespace blitz
         auto* sqe = ::io_uring_get_sqe(&this->mRing_);
         if (!sqe) 
         {
-            return make_error_code(ErrorCode::SubmitQueueFull);
+            return ErrorCode::SubmitQueueFull;
         }
         ::io_uring_prep_accept(sqe, acceptor.socket(), nullptr, nullptr, 0);
         return SubmitHelper(&this->mRing_, sqe, &acceptor);
@@ -187,7 +253,7 @@ namespace blitz
         auto* sqe = ::io_uring_get_sqe(&this->mRing_);
         if (!sqe)
         {
-            return make_error_code(ErrorCode::SubmitQueueFull);
+            return ErrorCode::SubmitQueueFull;
         }
         if (conn->isRead())
         {
@@ -205,7 +271,7 @@ namespace blitz
         auto* sqe = ::io_uring_get_sqe(&this->mRing_);
         if (!sqe)
         {
-            return make_error_code(ErrorCode::SubmitQueueFull);
+            return ErrorCode::SubmitQueueFull;
         }
         ::io_uring_prep_close(sqe, conn->socket());
         return SubmitHelper(&this->mRing_, sqe, conn);
@@ -216,18 +282,29 @@ namespace blitz
         auto* sqe = ::io_uring_get_sqe(&this->mRing_);
         if (!sqe)
         {
-            return make_error_code(ErrorCode::SubmitQueueFull);
+            return ErrorCode::SubmitQueueFull;
         }
-        ::signal(sig, SignalHandle);
-        ::io_uring_prep_read(sqe, SIGNAL_FD[0], &CURRENT_SIGNAL, sizeof(CURRENT_SIGNAL), 0);
-        SignalEvent.setEvent(EventType::SIGNAL);
-        SignalEvent.setSocket(SIGNAL_FD[0]);
-        auto ec = SubmitHelper(&this->mRing_, sqe, &SignalEvent);
+        ::signal(sig, &SignalEvent::SignalHandle);
+        auto& sev = SignalEvent::instance();
+        ::io_uring_prep_read(sqe, sev.readPipe(), &sev.curSignal(), sizeof(sev.curSignal()), 0);
+        auto ec = SubmitHelper(&this->mRing_, sqe, &sev);
         if (ec != ErrorCode::Success)
         {
             ::signal(sig, SIG_DFL);
         }
         return ec;
+    }
+
+    std::error_code LinuxEventQueue::submitTimerTick()
+    {
+        auto* sqe = ::io_uring_get_sqe(&this->mRing_);
+        if (!sqe)
+        {
+            return ErrorCode::SubmitQueueFull;
+        }
+        auto& tev = TickEvent::instance();
+        ::io_uring_prep_read(sqe, tev.fd(), &tev.tickCount(), sizeof(tev.tickCount()), 0);
+        return SubmitHelper(&this->mRing_, sqe, &tev);
     }
 
 #elif _WIN32

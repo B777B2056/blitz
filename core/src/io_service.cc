@@ -2,7 +2,6 @@
 #include <cerrno>
 #include <cstring>
 #include "connection.h"
-#include "sig_handler.h"
 
 #define ASYNC_EXEC(THREAD_POOL, CB, ARGS...)   \
     if (CB)  \
@@ -106,10 +105,16 @@ namespace blitz
         return this->ec; 
     }
 
-    IoService::IoService(Acceptor& acceptor, std::size_t threadNum)
-        : mIsLoopStop_{false}, mAcceptor_{acceptor}, mThreadPool_{threadNum}
+    IoService::IoService(Acceptor& acceptor, std::size_t threadNum, std::chrono::milliseconds tickMs)
+        : mIsLoopStop_{false}, mAcceptor_{acceptor}, mThreadPool_{threadNum}, mTickMs_{tickMs}
     {
         this->mEventQueue_.submitAccept(this->mAcceptor_);
+        using namespace std::chrono_literals;
+        if (this->mTickMs_ != 0ms)
+        {
+            TickEvent::instance().setTimer(this->mTickMs_.count());
+            this->mEventQueue_.submitTimerTick();
+        }
     }
 
     IoService::~IoService()
@@ -122,6 +127,12 @@ namespace blitz
         if (!conn)  return;
         conn->setEvent(EventType::CLOSED);
         this->mEventQueue_.submitCloseConn(conn);
+        this->mTimer_.remove(conn);
+    }
+
+    void IoService::registTimeoutCallback(TimeoutCallback cb, std::chrono::milliseconds timeoutMs) noexcept
+    {
+        this->mTimer_.registTimeoutCallback(cb, timeoutMs);
     }
 
     void IoService::registSignalCallback(int sig, SignalCallback cb) noexcept 
@@ -139,9 +150,16 @@ namespace blitz
             if (!event)  continue;
             if (event->isSignal())
             {
-                auto* sigEv = static_cast<SignalHandler*>(event);
-                auto cb = this->mSignalCbs_[sigEv->signal()];
+                auto* sigEv = static_cast<SignalEvent*>(event);
+                auto cb = this->mSignalCbs_[sigEv->curSignal()];
                 if (cb) cb();
+                continue;
+            }
+            else if (event->isTick())
+            {
+                this->mTimer_.tick();
+                TickEvent::instance().setTimer(this->mTickMs_.count());
+                this->mEventQueue_.submitTimerTick();
                 continue;
             }
             auto* conn = static_cast<Connection*>(event);
@@ -160,6 +178,7 @@ namespace blitz
             }
             else if (conn->isAccept())
             {
+                this->mTimer_.add(conn);
                 this->mConns_[conn] = this->asyncHandle(conn);
                 this->mEventQueue_.submitAccept(this->mAcceptor_);
             }
@@ -167,13 +186,6 @@ namespace blitz
             {
                 // 恢复IO协程
                 this->mConns_[conn].resume();
-            }
-            else if (conn->isTimeout())
-            {
-                [this, conn]()->AsyncTask
-                {
-                    ASYNC_EXEC(this->mThreadPool_, this->mTimeoutCb_, conn);
-                }();
             }
         }
     }

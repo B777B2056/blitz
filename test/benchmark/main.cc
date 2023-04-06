@@ -3,6 +3,7 @@
 #include "io_service.h"
 #include "connection.h"
 
+using namespace std::chrono_literals;
 std::string data = "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nblitz";
 
 int main()
@@ -11,7 +12,7 @@ int main()
     unsigned int threadNum = 7;
     blitz::Acceptor acceptor;
     acceptor.listen(port);
-    auto svr = blitz::IoService{acceptor, threadNum};
+    auto svr = blitz::IoService{acceptor, threadNum, 100ms};
     svr.registSignalCallback(SIGPIPE, []()->void { std::cout << "Caught signal SIGPIPE" << std::endl; });
     svr.registSignalCallback(SIGINT, [&svr]()->void { std::cout << "Caught signal SIGINT" << std::endl; svr.stop(); });
     svr.registReadCallback([](blitz::Connection* conn)->void
@@ -45,6 +46,10 @@ int main()
     {
         std::cout << ec.message() << std::endl;
     });
+    svr.registTimeoutCallback([](blitz::Connection* conn)->void
+    {
+        std::cout << "conn time out" << std::endl;
+    }, 100ms);
     svr.run();
     return 0;
 }

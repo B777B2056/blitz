@@ -51,7 +51,7 @@ namespace blitz
         bool isRead() const { return this->mCurEvent_ == EventType::READ; }
         bool isWrite() const { return this->mCurEvent_ == EventType::WRITE; }
         bool isClosed() const { return this->mCurEvent_ == EventType::CLOSED; }
-        bool isTimeout() const { return this->mCurEvent_ == EventType::TIMEOUT; }
+        bool isTick() const { return this->mCurEvent_ == EventType::TIMEOUT; }
         bool isSignal() const { return this->mCurEvent_ == EventType::SIGNAL; }
     };
 }
