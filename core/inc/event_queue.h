@@ -1,4 +1,6 @@
 #pragma once
+#include <thread>
+#include <vector>
 #ifdef __linux__
 #include <liburing.h>
 #include <sys/timerfd.h>
@@ -134,5 +136,4 @@ namespace blitz
     private:
         EventQueueImpl impl_;
     };
-
 }   // namespace blitz

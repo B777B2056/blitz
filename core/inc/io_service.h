@@ -2,17 +2,8 @@
 #include <coroutine>
 #include <functional>
 #include <unordered_map>
-#include "acceptor.h"
 #include "ec.h"
 #include "event_queue.h"
-#include "threadpool.h"
-#include "timer.h"
-
-#ifdef __linux__
-    #define SIGNAL_NUM 32
-#elif _WIN32
-    #define SIGNAL_NUM 6
-#endif
 
 namespace blitz
 {
@@ -51,7 +42,7 @@ namespace blitz
         void await_suspend(std::coroutine_handle<> handle) noexcept;
         std::error_code await_resume() const noexcept;
 
-        IoTaskAwaiter(EventQueue* q, Connection* channel);
+        IoTaskAwaiter(EventQueue* q, Connection* conn);
 
     private:
         std::error_code ec;
@@ -59,43 +50,33 @@ namespace blitz
         EventQueue* mEventQueue_;
     };
 
-    using SignalCallback = std::function<void()>;
-    using IoEventCallback = std::function<void(Connection* conn)>;
-    using ErrorCallback = std::function<void(Connection* conn, std::error_code ec)>;
+    class Timer;
 
     class IoService
     {
     public:
-        IoService() = delete;
-        IoService(Acceptor& acceptor, std::size_t threadNum, std::chrono::milliseconds tickMs);
+        IoService() = default;
         IoService(const IoService&) = delete;
         IoService& operator=(const IoService&) = delete;
         IoService(IoService&&) = default;
         IoService& operator=(IoService&&) = default;
         ~IoService();
 
-        void registReadCallback(IoEventCallback cb) noexcept { this->mReadCb_ = cb; }
-        void registWriteCallback(IoEventCallback cb) noexcept { this->mWriteCb_ = cb; }
-        void registErrorCallback(ErrorCallback cb) noexcept { this->mErrCb_ = cb; }
-        void registTimeoutCallback(TimeoutCallback cb, std::chrono::milliseconds timeoutMs) noexcept;
-        void registSignalCallback(int sig, SignalCallback cb) noexcept;
+        void setReadCallback(IoEventCallback cb) noexcept { this->mReadCb_ = cb; }
+        void setWriteCallback(IoEventCallback cb) noexcept { this->mWriteCb_ = cb; }
+        void setErrorCallback(ErrorCallback cb) noexcept { this->mErrCb_ = cb; }
 
-        void run();
-        void stop() { this->mIsLoopStop_ = true; }
-        void closeConn(Connection* conn);
+        void runOnce(Timer& t);
+        void registConnection(Connection* conn);
+        void wakeupFromWait();
 
     private:
-        bool mIsLoopStop_{false};
-        Acceptor& mAcceptor_;
         EventQueue mEventQueue_;
-        Timer mTimer_;
         ErrorCallback mErrCb_;
         IoEventCallback mReadCb_, mWriteCb_;
-        SignalCallback mSignalCbs_[SIGNAL_NUM];
-        ThreadPool mThreadPool_;
-        std::chrono::milliseconds mTickMs_;
         std::unordered_map<Connection*, AsyncTask> mConns_;
-
+        
+        void closeConnection(Connection* conn);
         AsyncTask asyncHandle(Connection* conn);
     };
 }   // namespace blitz

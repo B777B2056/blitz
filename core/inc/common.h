@@ -1,5 +1,7 @@
 #pragma once
 #include <cstdint>
+#include <functional>
+#include <system_error>
 
 namespace blitz
 {
@@ -25,10 +27,17 @@ namespace blitz
         ACCEPT,
         READ,
         WRITE,
+        CLOSING,
         CLOSED,
         TIMEOUT,
         SIGNAL
     };
+
+    class Connection;
+
+    using SignalCallback = std::function<void()>;
+    using IoEventCallback = std::function<void(Connection* conn)>;
+    using ErrorCallback = std::function<void(Connection* conn, std::error_code ec)>;
 
     class Event
     {
@@ -50,6 +59,7 @@ namespace blitz
         bool isAccept() const { return this->mCurEvent_ == EventType::ACCEPT; }
         bool isRead() const { return this->mCurEvent_ == EventType::READ; }
         bool isWrite() const { return this->mCurEvent_ == EventType::WRITE; }
+        bool isClosing() const { return this->mCurEvent_ == EventType::CLOSING; }
         bool isClosed() const { return this->mCurEvent_ == EventType::CLOSED; }
         bool isTick() const { return this->mCurEvent_ == EventType::TIMEOUT; }
         bool isSignal() const { return this->mCurEvent_ == EventType::SIGNAL; }

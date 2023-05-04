@@ -2,22 +2,7 @@
 #include <cerrno>
 #include <cstring>
 #include "connection.h"
-
-#define ASYNC_EXEC(THREAD_POOL, CB, ARGS...)   \
-    if (CB)  \
-    {   \
-        if (0 == THREAD_POOL.threadNum())    \
-        {   \
-            CB(ARGS);    \
-        }   \
-        else    \
-        {   \
-            co_await MultiThreadTaskAwaiter{&THREAD_POOL, [ARGS, this]()->void   \
-            {   \
-                CB(ARGS);    \
-            }}; \
-        }   \
-    }   \
+#include "timer.h"
 
 namespace blitz
 {
@@ -105,89 +90,57 @@ namespace blitz
         return this->ec; 
     }
 
-    IoService::IoService(Acceptor& acceptor, std::size_t threadNum, std::chrono::milliseconds tickMs)
-        : mIsLoopStop_{false}, mAcceptor_{acceptor}, mThreadPool_{threadNum}, mTickMs_{tickMs}
+    IoService::~IoService()
     {
-        this->mEventQueue_.submitAccept(this->mAcceptor_);
-        using namespace std::chrono_literals;
-        if (this->mTickMs_ != 0ms)
+        for (auto& [conn, _] : this->mConns_)
         {
-            TickEvent::instance().setTimer(this->mTickMs_.count());
-            this->mEventQueue_.submitTimerTick();
+            this->closeConnection(conn);
         }
     }
 
-    IoService::~IoService()
+    void IoService::registConnection(Connection* conn)
     {
-
+        this->mConns_[conn] = this->asyncHandle(conn);
     }
 
-    void IoService::closeConn(Connection* conn)
+    void IoService::wakeupFromWait()
+    {
+        // 注册一个任意事件，唤醒io_uring
+        this->mEventQueue_.submitSysSignal(SIGINT);
+    }
+
+    void IoService::runOnce(Timer& t)
+    {
+        std::error_code ec;
+        auto* conn = static_cast<Connection*>(this->mEventQueue_.waitCompletionEvent(ec));
+        if (!conn)  return;
+        if (ec != ErrorCode::Success)
+        {
+            this->mErrCb_(conn, ec);
+            return;
+        }
+        if (conn->isClosing())
+        {
+            this->closeConnection(conn);
+        }
+        else if (conn->isClosed())
+        {
+            t.remove(conn);
+            this->mConns_.erase(conn);
+            delete conn;
+        }
+        else if (conn->isRead() || conn->isWrite())
+        {
+            // 恢复IO协程
+            this->mConns_[conn].resume();
+        }
+    }
+
+    void IoService::closeConnection(Connection* conn)
     {
         if (!conn)  return;
         conn->setEvent(EventType::CLOSED);
         this->mEventQueue_.submitCloseConn(conn);
-        this->mTimer_.remove(conn);
-    }
-
-    void IoService::registTimeoutCallback(TimeoutCallback cb, std::chrono::milliseconds timeoutMs) noexcept
-    {
-        this->mTimer_.registTimeoutCallback(cb, timeoutMs);
-    }
-
-    void IoService::registSignalCallback(int sig, SignalCallback cb) noexcept 
-    { 
-        this->mSignalCbs_[sig] = cb; 
-        this->mEventQueue_.submitSysSignal(sig);
-    }
-
-    void IoService::run()
-    {
-        std::error_code ec;
-        while (!this->mIsLoopStop_)
-        {
-            auto* event = this->mEventQueue_.waitCompletionEvent(ec);
-            if (!event)  continue;
-            if (event->isSignal())
-            {
-                auto* sigEv = static_cast<SignalEvent*>(event);
-                auto cb = this->mSignalCbs_[sigEv->curSignal()];
-                if (cb) cb();
-                continue;
-            }
-            else if (event->isTick())
-            {
-                this->mTimer_.tick();
-                TickEvent::instance().setTimer(this->mTickMs_.count());
-                this->mEventQueue_.submitTimerTick();
-                continue;
-            }
-            auto* conn = static_cast<Connection*>(event);
-            if (ec != ErrorCode::Success)
-            {
-                [this, conn, ec]()->AsyncTask
-                {   
-                    ASYNC_EXEC(this->mThreadPool_, this->mErrCb_, conn, ec);
-                }();
-                continue;
-            }
-            if (conn->isClosed())
-            {
-                this->mConns_.erase(conn);
-                delete conn;
-            }
-            else if (conn->isAccept())
-            {
-                this->mTimer_.add(conn);
-                this->mConns_[conn] = this->asyncHandle(conn);
-                this->mEventQueue_.submitAccept(this->mAcceptor_);
-            }
-            else if (conn->isRead() || conn->isWrite())
-            {
-                // 恢复IO协程
-                this->mConns_[conn].resume();
-            }
-        }
     }
 
     AsyncTask IoService::asyncHandle(Connection* conn)
@@ -198,22 +151,22 @@ namespace blitz
         if (auto ec = co_await IoTaskAwaiter{&this->mEventQueue_, conn}; ec != ErrorCode::Success)
         {
             // 读入出错，执行错误回调
-            ASYNC_EXEC(this->mThreadPool_, this->mErrCb_, conn, ec);
+            this->mErrCb_(conn, ec);
             co_return;
         }
         // 在线程池中执行用户业务逻辑
-        ASYNC_EXEC(this->mThreadPool_, this->mReadCb_, conn);
+        this->mReadCb_(conn);
         // 写入缓冲区
         if (!conn)  co_return;
         conn->setEvent(EventType::WRITE);
         if (auto ec = co_await IoTaskAwaiter{&this->mEventQueue_, conn}; ec != ErrorCode::Success)
         {
             // 写入出错，执行错误回调
-            ASYNC_EXEC(this->mThreadPool_, this->mErrCb_, conn, ec);
+            this->mErrCb_(conn, ec);
             co_return;
         }
         // 在线程池中执行用户业务逻辑
-        ASYNC_EXEC(this->mThreadPool_, this->mWriteCb_, conn);
+        this->mWriteCb_(conn);
         co_return;
     }
 }   // namespace blitz

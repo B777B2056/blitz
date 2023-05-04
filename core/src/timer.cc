@@ -4,6 +4,7 @@ namespace blitz
 {
     void Timer::tick() noexcept
     {
+        std::lock_guard l{this->mMutex_};
         while (!this->mTimeHeap_.empty())
         {
             auto& info = *this->mTimeHeap_.begin();
@@ -26,11 +27,13 @@ namespace blitz
     {
         using namespace std::chrono_literals;
         if (this->mTimeoutMs_ == 0ms)   return;
+        std::lock_guard l{this->mMutex_};
         this->mTimeHeap_.emplace(TimerInfo{conn, this->mTimeoutMs_});
     }
 
     void Timer::remove(Connection* conn) noexcept
     {
+        std::lock_guard l{this->mMutex_};
         for (auto it = this->mTimeHeap_.begin(); it != this->mTimeHeap_.end();)
         {
             if (it->connection() == conn)

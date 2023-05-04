@@ -1,21 +1,30 @@
 #include <string>
+#include <mutex>
 #include <iostream>
-#include "io_service.h"
+#include "server.h"
 #include "connection.h"
-
-using namespace std::chrono_literals;
-std::string data = "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nblitz";
 
 int main()
 {
+    using namespace std::chrono_literals;
+    std::string data = "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nblitz";
     std::uint16_t port = 8888;
-    unsigned int threadNum = 7;
-    blitz::Acceptor acceptor;
-    acceptor.listen(port);
-    auto svr = blitz::IoService{acceptor, threadNum, 100ms};
-    svr.registSignalCallback(SIGPIPE, []()->void { std::cout << "Caught signal SIGPIPE" << std::endl; });
-    svr.registSignalCallback(SIGINT, [&svr]()->void { std::cout << "Caught signal SIGINT" << std::endl; svr.stop(); });
-    svr.registReadCallback([](blitz::Connection* conn)->void
+    std::size_t threadNum = 7;
+    std::mutex mt;
+
+    blitz::TcpServer svr{threadNum, port};
+    svr.setSignalCallback(SIGPIPE, [&mt]()->void 
+    { 
+        std::lock_guard l{mt};
+        std::cout << "Caught signal SIGPIPE" << std::endl; 
+    });
+    svr.setSignalCallback(SIGINT, [&svr]()->void 
+    { 
+        std::cout << "Caught signal SIGINT" << std::endl; 
+        svr.stop(); 
+    });
+
+    svr.setReadCallback([&data, &mt](blitz::Connection* conn)->void
     {
         char ch;
         std::error_code ec;
@@ -38,18 +47,26 @@ int main()
         }
         conn->write(std::span{data.data(), data.size()}, ec);
     });
-    svr.registWriteCallback([&svr](blitz::Connection* conn)->void
+
+    svr.setWriteCallback([&mt](blitz::Connection* conn)->void
     {
-        svr.closeConn(conn);
+        std::lock_guard l{mt};
+        std::cout << "write done" << std::endl;
+        conn->close();
     });
-    svr.registErrorCallback([](blitz::Connection* conn, std::error_code ec)->void
+
+    svr.setErrorCallback([&mt](blitz::Connection* conn, std::error_code ec)->void
     {
+        std::lock_guard l{mt};
         std::cout << ec.message() << std::endl;
     });
-    svr.registTimeoutCallback([](blitz::Connection* conn)->void
+
+    svr.setTimeoutCallback([&mt](blitz::Connection* conn)->void
     {
-        std::cout << "conn time out" << std::endl;
-    }, 100ms);
-    svr.run();
+        std::lock_guard l{mt};
+        std::cout << "connection time out" << std::endl;
+    }, 1000ms);
+
+    svr.run(100ms);
     return 0;
 }

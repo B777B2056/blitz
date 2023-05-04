@@ -2,6 +2,7 @@
 #include <chrono>
 #include <functional>
 #include <set>
+#include <mutex>
 
 namespace blitz
 {
@@ -43,5 +44,6 @@ namespace blitz
         TimeoutCallback mCb_;
         std::chrono::milliseconds mTimeoutMs_;
         std::set<TimerInfo> mTimeHeap_;
+        mutable std::mutex mMutex_;
     };
 }   // namespace blitz

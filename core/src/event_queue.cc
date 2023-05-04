@@ -15,7 +15,7 @@
 namespace blitz
 {
 #ifdef __linux__
-    constexpr static int QUEUE_SIZE = 512;
+    constexpr static int QUEUE_SIZE = 64;
 
     int SignalEvent::curSig;
     int SignalEvent::sigFd[2];

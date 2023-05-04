@@ -1,57 +1,74 @@
 #include "threadpool.h"
-#include <memory>
-#include <cassert>
+#include "io_service.h"
 
 namespace blitz
 {
-    ThreadPool::ThreadPool(std::size_t threadNum)
+    IoServicePool::IoServicePool(std::size_t threadNum)
+        : mNextIoServiceIdx_{0}, mIoServices_{threadNum}
     {
-        for (std::size_t i = 0; i < threadNum; ++i)
+
+    }
+
+    IoServicePool::~IoServicePool()
+    {
+        for (auto& t : this->mThreads_)
         {
-            this->mThreads_.emplace_back([this](std::stop_token stoken)->void
+            t.request_stop();
+        }
+        for (auto& service : this->mIoServices_)
+        {
+            service.wakeupFromWait();
+        }
+    }
+
+    void IoServicePool::start(Timer& t)
+    {
+        for (std::size_t i = 0; i < this->mIoServices_.size(); ++i)
+        {
+            this->mThreads_.emplace_back([this, i, &t](std::stop_token stoken)->void
             {
                 while (!stoken.stop_requested())
                 {
-                    std::function<void()> task;
-                    {
-                        std::unique_lock lock{this->mMutex_};
-                        while ((!stoken.stop_requested()) && this->mTaskQueue_.empty())
-                        {
-                            this->mCv_.wait(lock);
-                        }
-                        if (stoken.stop_requested())
-                        {
-                            break;
-                        }
-                        task = this->mTaskQueue_.front();
-                        this->mTaskQueue_.pop();
-                    }
-                    task();
+                    this->mIoServices_[i].runOnce(t);
                 }
             });
         }
     }
 
-    ThreadPool::~ThreadPool()
+    void IoServicePool::putNewConnection(Connection* conn)
     {
-        if (0 == this->threadNum())   return;
-        for (auto& t : this->mThreads_)
-        {
-            t.request_stop();
-        }
-        this->mCv_.notify_all();
+        auto& service = this->nextIoService();
+        service.registConnection(conn);
     }
 
-    std::future<void> ThreadPool::submitTask(std::function<void()> task)
+    void IoServicePool::setReadCallback(IoEventCallback cb) noexcept
     {
-        assert(this->threadNum() > 0);
-        auto pkgTask = std::make_shared<std::packaged_task<void()>>(task);
-        auto future = pkgTask->get_future();
+        for (auto& service : this->mIoServices_)
         {
-            std::lock_guard lock{this->mMutex_};
-            this->mTaskQueue_.push([pkgTask]()->void{ (*pkgTask)(); });
+            service.setReadCallback(cb);
         }
-        this->mCv_.notify_one();
-        return future;
+    }
+
+    void IoServicePool::setWriteCallback(IoEventCallback cb) noexcept
+    {
+        for (auto& service : this->mIoServices_)
+        {
+            service.setWriteCallback(cb);
+        }
+    }
+
+    void IoServicePool::setErrorCallback(ErrorCallback cb) noexcept
+    {
+        for (auto& service : this->mIoServices_)
+        {
+            service.setErrorCallback(cb);
+        }
+    }
+
+    IoService& IoServicePool::nextIoService()
+    {
+        auto& service = this->mIoServices_[this->mNextIoServiceIdx_ % this->mIoServices_.size()];
+        ++this->mNextIoServiceIdx_;
+        return service;
     }
 }   // namespace blitz

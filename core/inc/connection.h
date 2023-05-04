@@ -13,6 +13,8 @@ namespace blitz
         Connection(SocketDescriptor socket);
         ~Connection() = default;
 
+        void close();
+
         std::size_t read(std::span<char> buf, std::error_code& err);
         std::size_t write(std::span<const char> buf, std::error_code& err);
 

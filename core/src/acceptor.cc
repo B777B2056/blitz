@@ -1,8 +1,8 @@
 #include "acceptor.h"
 #include <cstring>
 #include <utility>
+#include "connection.h"
 #include "ec.h"
-#include <iostream>
 
 namespace blitz
 {
@@ -43,15 +43,15 @@ namespace blitz
         
 #endif
 
-    Acceptor::Acceptor()
-        : Event{-1}, impl_{}
+    Acceptor::Acceptor(EventQueue& eq)
+        : Event{-1}, impl_{}, eventQueue_{eq}
     {
         this->mSocket_ = this->impl_.sockfd;
         this->setEvent(EventType::ACCEPT);
     }
 
     Acceptor::Acceptor(Acceptor&& rhs)
-        : Event{rhs.mSocket_}
+        : Event{rhs.mSocket_}, eventQueue_{rhs.eventQueue_}
     {
         *this = std::move(rhs);
     }
@@ -76,5 +76,10 @@ namespace blitz
     {
         this->impl_.bind(port);
         this->impl_.listen(backlog);
+    }
+
+    std::error_code Acceptor::doOnce()
+    {
+        return this->eventQueue_.submitAccept(*this);
     }
 }   // namespace blitz

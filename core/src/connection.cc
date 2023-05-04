@@ -8,6 +8,11 @@ namespace blitz
 
     }
 
+    void Connection::close()
+    {
+        this->setEvent(EventType::CLOSING);
+    }
+
     std::size_t Connection::read(std::span<char> buf, std::error_code& err)
     {
         std::size_t n = this->mInputBuf_.readFromBuffer(buf);

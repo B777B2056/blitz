@@ -8,9 +8,13 @@
 #endif
 
 #include "common.h"
+#include "event_queue.h"
 
 namespace blitz
 {
+    class Acceptor;
+    class Connection;
+
 #ifdef __linux__
     
     struct LinuxAcceptorImpl
@@ -34,16 +38,19 @@ namespace blitz
     class Acceptor : public Event
     {
     public:
-        Acceptor(); // 设置事件为ACCEPT
+        Acceptor() = delete;
+        Acceptor(EventQueue& eq); // 设置事件为ACCEPT
         Acceptor(const Acceptor&) = delete;
         Acceptor& operator=(const Acceptor&) = delete;
         Acceptor(Acceptor&& rhs);
         Acceptor& operator=(Acceptor&& rhs);
         ~Acceptor();
 
-        void listen(std::uint16_t port, int backlog = 5);
+        void listen(std::uint16_t port, int backlog);
+        std::error_code doOnce();
 
     private:
         AcceptorImpl impl_;
+        EventQueue& eventQueue_;
     };
 }   // namespace blitz
